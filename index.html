@@ -724,19 +724,31 @@ const showErr=(id,msg)=>{$(id).innerHTML=`<div class="alert a-err">⚠️ ${msg}
 const clrErr=id=>{$(id).innerHTML=''};
 const openMo=id=>$(id).classList.add('open');
 const closeMo=id=>$(id).classList.remove('open');
-// Acierto grupos: mismo L/E/V. Acierto KO: mismo L/E/V Y mismo marcador
+// Acierto grupos: mismo L/E/V. Acierto KO: solo ganador (L o V), sin marcador.
+// Si el colaborador ya guardó marcador antes, se ignora; solo cuenta p.res
 const chkHit=(p,r,isKO)=>{
   if(!p||!r) return false;
-  if(isKO) return p.res===r.res && String(p.h)===String(r.h) && String(p.a)===String(r.a);
-  return p.res===r.res;
+  return p.res===r.res; // igual para grupos y KO
 };
 const grpDone=u=>GROUP_IDS.filter(id=>{const p=u.picks?.[id];return p&&p.res}).length>=72;
-const NOW=new Date();
-// isPast: respeta fecha personalizada del admin (para KO con hora exacta definida)
+// isPast: compara con hora actual en CDT (México central, UTC-5 en verano)
+// mkDate crea fechas sin zona (interpretadas como LOCAL del navegador)
+// Al abrir desde México el navegador ya está en CDT → funciona correctamente.
+// Al abrir desde servidor/UTC → corregimos sumando offset.
 function isPast(m){
   const customIso=_results&&_results[m.id+'_date'];
-  const d=customIso?new Date(customIso):m.date;
-  return d && d < NOW;
+  let d;
+  if(customIso){
+    // fecha guardada por admin → ya tiene zona o es local
+    d=new Date(customIso);
+  } else {
+    d=m.date; // mkDate sin zona = local del navegador
+  }
+  if(!d) return false;
+  // Obtener hora actual en zona México (America/Mexico_City = CDT en verano)
+  const nowMX=new Date(new Date().toLocaleString('en-US',{timeZone:'America/Mexico_City'}));
+  const dMX=new Date(d.toLocaleString('en-US',{timeZone:'America/Mexico_City'}));
+  return dMX < nowMX;
 }
 const loading=(msg='Cargando…')=>{$('loadingMsg').textContent=msg;$('loadingOverlay').style.display='flex'};
 const doneLoad=()=>{$('loadingOverlay').style.display='none'};
@@ -917,8 +929,7 @@ function buildMatchCard(m,u){
   // ── MODO VISTA (guardado, pasado sin guardar, o bloqueado) ──
   if(isSaved||isLocked||(past&&!isSaved)){
     const selLabel=pick?.res==='L'?homeName:pick?.res==='E'?'Empate':pick?.res==='V'?awayName:'–';
-    let scoreStr='';
-    if(isSaved&&m.isKO&&pick.h!==undefined) scoreStr=`<div class="lev-lbl" style="margin-top:3px">Marcador: <strong style="color:var(--gold)">${pick.h} – ${pick.a}</strong></div>`;
+    // En KO nunca mostramos marcador (ya no se pide)
     card.innerHTML=`
       <div class="mc-hdr">
         <div><span style="color:var(--white)">Partido ${m.matchNum} · ${subInfo}</span>${matchMeta?`<br><span style="font-size:9px">${matchMeta}</span>`:''}</div>
@@ -929,10 +940,10 @@ function buildMatchCard(m,u){
         <div class="lev-wrap">
           <div class="lev-btns">
             <button class="lev-btn ${pick?.res==='L'?'sel-L':''}" disabled>Local</button>
-            <button class="lev-btn ${pick?.res==='E'?'sel-E':''}" disabled>Empate</button>
+            ${!m.isKO?`<button class="lev-btn ${pick?.res==='E'?'sel-E':''}" disabled>Empate</button>`:''}
             <button class="lev-btn ${pick?.res==='V'?'sel-V':''}" disabled>Visitante</button>
           </div>
-          ${isSaved?`<div class="lev-lbl">Tu elección: <strong style="color:var(--gold)">${selLabel}</strong></div>${scoreStr}`
+          ${isSaved?`<div class="lev-lbl">Tu elección: <strong style="color:var(--gold)">${selLabel}</strong></div>`
                    :`<div class="lev-lbl" style="color:var(--red)">Partido cerrado</div>`}
         </div>
         <div class="team-away"><div class="tname">${awayName}</div></div>
@@ -978,7 +989,7 @@ function buildMatchCard(m,u){
         </div>`;
       return card;
     }
-    // Ambos equipos definidos → formulario completo L/E/V + marcador
+    // Ambos equipos definidos → solo Local / Visitante (sin Empate, sin marcador)
     card.innerHTML=`
       <div class="mc-hdr">
         <div><span style="color:var(--white)">Partido ${m.matchNum} · ${subInfo}</span>${matchMeta?`<br><span style="font-size:9px">${matchMeta}</span>`:''}</div>
@@ -986,18 +997,12 @@ function buildMatchCard(m,u){
       </div>
       <div class="mc-body">
         <div class="team-local"><div class="tname">${homeName}</div></div>
-        <div class="ko-score-wrap">
-          <div class="lev-btns" style="margin-bottom:4px">
+        <div class="lev-wrap">
+          <div class="lev-btns">
             <button class="lev-btn" id="bl_${m.id}" onclick="selLEV('${m.id}','L','${homeName}','${awayName}')">Local</button>
-            <button class="lev-btn" id="be_${m.id}" onclick="selLEV('${m.id}','E','${homeName}','${awayName}')">Empate</button>
             <button class="lev-btn" id="bv_${m.id}" onclick="selLEV('${m.id}','V','${homeName}','${awayName}')">Visitante</button>
           </div>
-          <div class="ko-score-row">
-            <input class="ko-input" type="number" min="0" max="20" id="kh_${m.id}" placeholder="0">
-            <span class="ko-sep">—</span>
-            <input class="ko-input" type="number" min="0" max="20" id="ka_${m.id}" placeholder="0">
-          </div>
-          <div class="lev-lbl" id="lbl_${m.id}">Elige ganador y marcador</div>
+          <div class="lev-lbl" id="lbl_${m.id}">¿Quién gana?</div>
         </div>
         <div class="team-away"><div class="tname">${awayName}</div></div>
       </div>`;
@@ -1008,8 +1013,11 @@ function buildMatchCard(m,u){
 function selLEV(matchId,val,hN,aN){
   const bL=$(`bl_${matchId}`),bE=$(`be_${matchId}`),bV=$(`bv_${matchId}`);
   if(!bL) return;
-  [bL,bE,bV].forEach(b=>b.classList.remove('sel-L','sel-E','sel-V'));
-  if(val==='L')bL.classList.add('sel-L');else if(val==='E')bE.classList.add('sel-E');else bV.classList.add('sel-V');
+  // Limpiar todos (bE puede no existir en KO)
+  [bL,bE,bV].filter(Boolean).forEach(b=>b.classList.remove('sel-L','sel-E','sel-V'));
+  if(val==='L')bL.classList.add('sel-L');
+  else if(val==='E'&&bE)bE.classList.add('sel-E');
+  else if(bV)bV.classList.add('sel-V');
   if(!window._pending)window._pending={};
   window._pending[matchId]=val;
   const lbl=$(`lbl_${matchId}`);
@@ -1027,11 +1035,7 @@ async function saveProgress(){
     if(pendVal&&(!u.picks?.[m.id]||!u.picks[m.id].res)){
       if(!u.picks)u.picks={};
       const pickData={res:pendVal,savedAt:new Date().toISOString()};
-      if(m.isKO){
-        const h=$(`kh_${m.id}`)?.value||'0';
-        const a=$(`ka_${m.id}`)?.value||'0';
-        pickData.h=h;pickData.a=a;
-      }
+      // No guardamos marcador en KO (solo ganador cuenta)
       u.picks[m.id]=pickData;cnt++;
     }
   });
@@ -1054,7 +1058,12 @@ function updStats(u){
   $('uGProg').textContent=`${gS} / 72`;$('uGBar').style.width=`${Math.round((gS/72)*100)}%`;
   $('uKProg').textContent=`${kS} / 32`;$('uKBar').style.width=`${Math.round((kS/32)*100)}%`;
   let hits=0;
-  ALL.forEach(m=>{if(_results[m.id]&&u.picks?.[m.id])hits+=chkHit(u.picks[m.id],_results[m.id],m.isKO)?1:0});
+  // Sumar aciertos grupos + todas las fases KO (solo ganador cuenta)
+  ALL.forEach(m=>{
+    const r=_results[m.id];
+    const p=u.picks?.[m.id];
+    if(r&&p&&p.res) hits+=chkHit(p,r,m.isKO)?1:0;
+  });
   $('uHits').textContent=hits||'–';
 }
 
@@ -1130,12 +1139,12 @@ function renderRs(who){
   if(who==='adm'){
     $('admRs').innerHTML=`
       <div class="alert a-info mb14">⚽ Selecciona quién ganó o si hubo empate. Al guardar se recalculan los aciertos de todos.</div>
-      <div class="tabs" id="rsTabs">${PHASES.map(ph=>`<button class="tab ${ph.id==='group'?'on':''}" onclick="showRsPhase('${ph.id}',this,'rsCont')">${ph.emoji} ${ph.name}</button>`).join('')}</div>
+      <div class="tabs" id="rsTabs">${PHASES.map(ph=>`<button class="tab ${ph.id==='group'?'on':''}" data-phase="${ph.id}" onclick="showRsPhase('${ph.id}',this,'rsCont')">${ph.emoji} ${ph.name}</button>`).join('')}</div>
       <div id="rsCont"></div>
       <div class="save-row"><button class="btn btn-ok" onclick="saveRes('adm')">💾 Guardar resultados</button><span class="fs12 tm" id="rsStat"></span></div>`;
     showRsPhase('group',document.querySelector('#rsTabs .tab.on'),'rsCont');
   } else {
-    $('vRsTabs').innerHTML=PHASES.map(ph=>`<button class="tab ${ph.id==='group'?'on':''}" onclick="showRsPhase('${ph.id}',this,'vRsCont')">${ph.emoji} ${ph.name}</button>`).join('');
+    $('vRsTabs').innerHTML=PHASES.map(ph=>`<button class="tab ${ph.id==='group'?'on':''}" data-phase="${ph.id}" onclick="showRsPhase('${ph.id}',this,'vRsCont')">${ph.emoji} ${ph.name}</button>`).join('');
     showRsPhase('group',document.querySelector('#vRsTabs .tab.on'),'vRsCont');
   }
 }
@@ -1204,9 +1213,13 @@ function buildResCard(m){
 
 function selResLEV(matchId,val){
   const rl=$(`rl_${matchId}`),re=$(`re_${matchId}`),rv=$(`rv_${matchId}`);
-  if(!rl)return;[rl,re,rv].forEach(b=>b.classList.remove('sel-L','sel-E','sel-V'));
-  if(val==='L')rl.classList.add('sel-L');else if(val==='E')re.classList.add('sel-E');else rv.classList.add('sel-V');
-  if(!window._adminPending)window._adminPending={};
+  if(!rl)return;
+  // Filtrar nulls (re no existe en partidos KO)
+  [rl,re,rv].filter(Boolean).forEach(b=>b.classList.remove('sel-L','sel-E','sel-V'));
+  if(val==='L') rl.classList.add('sel-L');
+  else if(val==='E' && re) re.classList.add('sel-E');
+  else if(rv) rv.classList.add('sel-V');
+  if(!window._adminPending) window._adminPending={};
   window._adminPending[matchId]=val;
   const m=ALL.find(x=>x.id===matchId);
   const hN=($(`rh_nm_${matchId}`)?.value)||_results[matchId+'_home']||m?.home||'Local';
@@ -1287,12 +1300,33 @@ function propagateWinners(){
 async function saveRes(who){
   const statId=who==='adm'?'rsStat':'vRsStat';
   const tabsSelector=who==='adm'?'#rsTabs .tab.on':'#vRsTabs .tab.on';
-  const activePh=document.querySelector(tabsSelector);if(!activePh)return;
-  let phId='group';PHASES.forEach(ph=>{if(activePh.textContent.includes(ph.name))phId=ph.id});
-  const matches=ALL.filter(m=>m.phase===phId);let cnt=0;
+  const activePh=document.querySelector(tabsSelector);
+  if(!activePh){
+    console.error('saveRes: no hay tab activo');
+    $(statId).innerHTML='<span style="color:#ff8fa3">⚠️ Selecciona una fase primero.</span>';
+    return;
+  }
+  // Leer la fase del atributo data-phase (más robusto que textContent)
+  let phId=activePh.dataset.phase||'';
+  if(!phId){
+    // Fallback: buscar por texto
+    PHASES.forEach(ph=>{if(activePh.textContent.includes(ph.name))phId=ph.id});
+  }
+  if(!phId){phId='group';}
+  const matches=ALL.filter(m=>m.phase===phId);
+  let cnt=0;
   matches.forEach(m=>{
-    const pending=window._adminPending?.[m.id];
-    if(pending){_results[m.id]={res:pending};cnt++;delete window._adminPending[m.id]}
+    // Recoger selección del DOM (por si _adminPending se perdió)
+    const rl=$(`rl_${m.id}`),rv=$(`rv_${m.id}`);
+    let pendingFromDOM=null;
+    if(rl?.classList.contains('sel-L')) pendingFromDOM='L';
+    else if(rv?.classList.contains('sel-V')) pendingFromDOM='V';
+    const pending=window._adminPending?.[m.id]||pendingFromDOM;
+    if(pending){
+      _results[m.id]={res:pending};
+      cnt++;
+      delete window._adminPending[m.id];
+    }
     // Guardar nombres editados (solo KO)
     const hNm=$(`rh_nm_${m.id}`),aNm=$(`ra_nm_${m.id}`);
     if(hNm&&hNm.value)_results[m.id+'_home']=hNm.value;
@@ -1300,14 +1334,21 @@ async function saveRes(who){
   });
   // Propagar ganadores automáticamente a siguientes llaves
   if(phId!=='group') propagateWinners();
+  // Siempre guardar (incluso si solo cambiaron nombres de equipos)
   loading('Guardando resultados en Firebase…');
   try{
     await fbSetResults(_results);doneLoad();
-    // Si hay avance de ganadores, re-renderizar la fase actual para mostrar nombres actualizados
+    // Re-renderizar para mostrar nuevos nombres y estados
     if(phId!=='group') showRsPhase(phId, document.querySelector(tabsSelector), who==='adm'?'rsCont':'vRsCont');
-    $(statId).innerHTML=`<span style="color:#4edd85">✅ ${cnt>0?cnt+' resultado(s) guardados':'Datos guardados'} ✓</span>`;
-    setTimeout(()=>$(statId).innerHTML='',3000);
-  }catch(e){doneLoad();$(statId).innerHTML='<span style="color:#ff8fa3">❌ Error al guardar.</span>'}
+    const msg=cnt>0?`✅ ${cnt} resultado(s) guardados`:'✅ Datos guardados';
+    $(statId).innerHTML=`<span style="color:#4edd85">${msg}</span>`;
+    setTimeout(()=>$(statId).innerHTML='',3500);
+  }catch(e){
+    doneLoad();
+    console.error('saveRes error:',e);
+    $(statId).innerHTML='<span style="color:#ff8fa3">❌ Error al guardar: '+e.message+'</span>';
+    setTimeout(()=>$(statId).innerHTML='',5000);
+  }
 }
 
 async function renderLb(cid){
@@ -1569,7 +1610,6 @@ async function renderLoginPodio(){
     console.log('Podio login: no disponible',e);
   }
 }
-
 </script>
 </body>
 </html>
